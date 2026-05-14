@@ -281,17 +281,15 @@ const VideoViewer = forwardRef<HTMLVideoElement, VideoViewerProps>(
       });
     }, [videoRef]);
 
-    const aspectRatio = probe.width / probe.height;
-
     return (
-      <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
-        {/* Video container */}
+      <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%" }}>
+        {/* Video container — flex:1 so it fills panel height; object-fit:contain handles any aspect ratio */}
         <div
           style={{
             position: "relative",
             background: "#000",
-            aspectRatio: String(aspectRatio),
-            width: "100%",
+            flex: 1,
+            minHeight: 0,
             overflow: "hidden",
           }}
         >
@@ -299,7 +297,7 @@ const VideoViewer = forwardRef<HTMLVideoElement, VideoViewerProps>(
             ref={ref ?? internalRef}
             src={`/api/projects/${projectId}/video`}
             preload="metadata"
-            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
             onTimeUpdate={handleTimeUpdate}
             onPlay={handlePlay}
             onPause={handlePause}

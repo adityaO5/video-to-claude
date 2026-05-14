@@ -122,10 +122,25 @@ function StatusBadge({ status }: { status: string }) {
 
 // ── Project card ──────────────────────────────────────────────────────────────
 
-function ProjectCard({ project }: { project: ProjectSummary }) {
+function ProjectCard({
+  project,
+  onDelete,
+}: {
+  project: ProjectSummary;
+  onDelete: (id: string) => void;
+}) {
   const router = useRouter();
   const inProgress = isInProgress(project.status);
   const displayName = project.sourceName ?? project.id;
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${displayName}"? This cannot be undone.`)) return;
+    setDeleting(true);
+    await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
+    onDelete(project.id);
+  };
 
   return (
     <div
@@ -166,7 +181,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       />
 
       <div className="px-4 py-4 pl-5 flex flex-col gap-3">
-        {/* Top row: name + badge */}
+        {/* Top row: name + badge + delete */}
         <div className="flex items-start justify-between gap-3">
           <span
             className="text-sm font-medium leading-snug truncate flex-1"
@@ -175,7 +190,29 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           >
             {displayName}
           </span>
-          <StatusBadge status={project.status} />
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <StatusBadge status={project.status} />
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              title="Delete project"
+              style={{
+                background: "transparent",
+                border: "none",
+                cursor: deleting ? "not-allowed" : "pointer",
+                color: "#666670",
+                fontSize: 14,
+                padding: "2px 4px",
+                borderRadius: 4,
+                lineHeight: 1,
+                opacity: deleting ? 0.4 : 1,
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f87171"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#666670"; }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Metadata row */}
@@ -357,7 +394,11 @@ export default function HomePage() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {projects.map((p) => (
-                <ProjectCard key={p.id} project={p} />
+                <ProjectCard
+                  key={p.id}
+                  project={p}
+                  onDelete={(id) => setProjects((prev) => prev.filter((x) => x.id !== id))}
+                />
               ))}
             </div>
           </section>

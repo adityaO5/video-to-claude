@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile, stat } from "fs/promises";
+import { readFile, stat, rm } from "fs/promises";
 import path from "path";
 
 import {
@@ -81,4 +81,19 @@ export async function GET(
   }
 
   return NextResponse.json(response);
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  const { id } = await context.params;
+  const dir = projectDir(id);
+  try {
+    await stat(dir);
+  } catch {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+  await rm(dir, { recursive: true, force: true });
+  return NextResponse.json({ ok: true });
 }
