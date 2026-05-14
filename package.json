@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "mcp:build": "tsc --project tsconfig.mcp.json",
+    "mcp:start": "node mcp/dist/mcp/server.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
