@@ -1,11 +1,7 @@
 "use client";
 
 import React, { useEffect } from "react";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
+import { Group as PanelGroup, Panel, Separator as PanelHandle } from "react-resizable-panels";
 import VideoViewer from "./VideoViewer";
 import Inspector from "./Inspector";
 import Timeline from "./Timeline";
@@ -160,12 +156,18 @@ export default function EditorShell({
 
   return (
     <div style={{ height: "calc(100vh - 56px)", background: "var(--bg)" }}>
-      <ResizablePanelGroup orientation="vertical" style={{ height: "100%" }}>
+      <PanelGroup
+        orientation="vertical"
+        style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}
+      >
         {/* Top panel: Viewer + Inspector */}
-        <ResizablePanel defaultSize={75} minSize={50}>
-          <ResizablePanelGroup orientation="horizontal" style={{ height: "100%" }}>
+        <Panel defaultSize={75} minSize={50} style={{ overflow: "hidden" }}>
+          <PanelGroup
+            orientation="horizontal"
+            style={{ display: "flex", flexDirection: "row", height: "100%", width: "100%" }}
+          >
             {/* Viewer */}
-            <ResizablePanel defaultSize={70} minSize={40}>
+            <Panel defaultSize={70} minSize={40} style={{ overflow: "hidden" }}>
               <VideoViewer
                 ref={playerRef}
                 projectId={projectId}
@@ -173,12 +175,23 @@ export default function EditorShell({
                 onTimeUpdate={onTimeUpdate}
                 onPlayPauseChange={onPlayPauseChange}
               />
-            </ResizablePanel>
+            </Panel>
 
-            <ResizableHandle withHandle />
+            {/* Vertical drag handle */}
+            <PanelHandle
+              style={{
+                width: 5,
+                background: "var(--border)",
+                cursor: "col-resize",
+                flexShrink: 0,
+                transition: "background 0.15s",
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f59e0b"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--border)"; }}
+            />
 
             {/* Inspector */}
-            <ResizablePanel defaultSize={30} minSize={20} maxSize={45}>
+            <Panel defaultSize={30} minSize={20} maxSize={45} style={{ overflow: "hidden" }}>
               <Inspector
                 projectId={projectId}
                 status={status}
@@ -189,22 +202,33 @@ export default function EditorShell({
                 currentTime={currentTime}
                 onSeek={onSeek}
               />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </ResizablePanel>
+            </Panel>
+          </PanelGroup>
+        </Panel>
 
-        <ResizableHandle withHandle />
+        {/* Horizontal drag handle */}
+        <PanelHandle
+          style={{
+            height: 5,
+            background: "var(--border)",
+            cursor: "row-resize",
+            flexShrink: 0,
+            transition: "background 0.15s",
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f59e0b"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--border)"; }}
+        />
 
         {/* Bottom panel: Timeline */}
-        <ResizablePanel defaultSize={25} minSize={12} maxSize={40}>
+        <Panel defaultSize={25} minSize={12} maxSize={40} style={{ overflow: "hidden" }}>
           <Timeline
             duration={probe.duration}
             currentTime={currentTime}
             scenes={scenes}
             onSeek={onSeek}
           />
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </Panel>
+      </PanelGroup>
     </div>
   );
 }
