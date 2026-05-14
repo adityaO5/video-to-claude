@@ -16,6 +16,7 @@ export interface FrameStripProps {
   sceneId: number;
   segId: number;
   frames: FrameMeta[];
+  onSeek?: (t: number) => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -32,7 +33,7 @@ function extractFilename(filePath: string): string {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function FrameStrip({ projectId, sceneId, segId, frames }: FrameStripProps) {
+export default function FrameStrip({ projectId, sceneId, segId, frames, onSeek }: FrameStripProps) {
   const sceneDir = `scene_${sceneId.toString().padStart(3, "0")}`;
   const segDir = `seg_${segId.toString().padStart(3, "0")}`;
 
@@ -63,7 +64,9 @@ export default function FrameStrip({ projectId, sceneId, segId, frames }: FrameS
               target="_blank"
               rel="noopener noreferrer"
               className="flex flex-col items-center gap-1 group flex-shrink-0"
-              title={`t=${frame.t.toFixed(2)}s — click to open full size`}
+              title={onSeek ? `t=${frame.t.toFixed(2)}s — click to seek` : `t=${frame.t.toFixed(2)}s — click to open full size`}
+              style={onSeek ? { cursor: "pointer" } : undefined}
+              onClick={onSeek ? (e) => { e.preventDefault(); onSeek(frame.t); } : undefined}
             >
               {/* Frame thumbnail */}
               <div

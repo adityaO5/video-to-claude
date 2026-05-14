@@ -89,8 +89,7 @@ function RefinementTabs({
               scenes={scenes}
               refined={refined}
               onRefine={onRefine}
-              // onSeek will be wired in Task 19; passed through for forward compat
-              {...({ onSeek } as object)}
+              onSeek={onSeek}
             />
           </div>
         </ScrollArea>
@@ -234,8 +233,7 @@ function DoneTabs({
                             sceneId={scene.id}
                             segId={seg.id}
                             frames={seg.frames}
-                            // onSeek will be wired in Task 19; passed through for forward compat
-                            {...({ onSeek } as object)}
+                            onSeek={onSeek}
                           />
                         </div>
                       ))}

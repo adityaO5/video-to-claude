@@ -24,6 +24,7 @@ export interface SceneListProps {
   scenes: Scene[];
   refined: boolean;
   onRefine: (scenes: RefinedScene[]) => void;
+  onSeek?: (t: number) => void;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ interface EditableRow {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function SceneList({ projectId, scenes, refined, onRefine }: SceneListProps) {
+export default function SceneList({ projectId, scenes, refined, onRefine, onSeek }: SceneListProps) {
   const [rows, setRows] = useState<EditableRow[]>(() =>
     scenes.map((s) => ({
       start: s.start,
@@ -246,7 +247,11 @@ export default function SceneList({ projectId, scenes, refined, onRefine }: Scen
             {rows.map((row, idx) => (
               <tr
                 key={idx}
-                style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
+                style={{
+                  borderBottom: "1px solid rgba(255,255,255,0.04)",
+                  ...(onSeek ? { cursor: "pointer" } : {}),
+                }}
+                onClick={onSeek ? () => onSeek(row.start) : undefined}
               >
                 {/* # */}
                 <td className="px-3 py-2" style={{ color: "var(--text-muted)" }}>

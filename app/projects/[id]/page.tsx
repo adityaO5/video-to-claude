@@ -3,10 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import SceneList, { type RefinedScene } from "@/components/SceneList";
-import ExtractPanel from "@/components/ExtractPanel";
-import FrameStrip from "@/components/FrameStrip";
-import SnippetCopy from "@/components/SnippetCopy";
+import EditorShell from "@/components/editor/EditorShell";
+import type { RefinedScene } from "@/components/SceneList";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -100,6 +98,10 @@ function isTerminal(status: JobStatus): boolean {
   return TERMINAL_STATUSES.has(status);
 }
 
+function isEditorStatus(status: JobStatus): boolean {
+  return status === "awaiting_refinement" || status === "done";
+}
+
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
@@ -163,67 +165,6 @@ function ProgressBar({ progress, color = "#f59e0b" }: { progress: number; color?
   );
 }
 
-// ── SceneTimeline ─────────────────────────────────────────────────────────────
-
-function SceneTimeline({ scenes, duration }: { scenes: Scene[]; duration: number }) {
-  if (!duration || scenes.length === 0) return null;
-
-  return (
-    <div
-      className="rounded-lg p-3 flex flex-col gap-2"
-      style={{ border: "1px solid var(--border)", background: "var(--surface)" }}
-    >
-      <span
-        className="text-xs font-medium tracking-widest uppercase"
-        style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
-      >
-        Timeline
-      </span>
-      {/* Timeline bar */}
-      <div className="relative h-6 rounded overflow-hidden" style={{ background: "var(--surface-2)" }}>
-        {scenes.map((scene, i) => {
-          const left = (scene.start / duration) * 100;
-          const width = ((scene.end - scene.start) / duration) * 100;
-          const hue = (i * 47) % 360;
-          return (
-            <div
-              key={scene.id}
-              className="absolute top-0 bottom-0 flex items-center justify-center text-xs overflow-hidden"
-              title={`Scene ${scene.id + 1}${scene.label ? ` · ${scene.label}` : ""}: ${scene.start.toFixed(1)}s – ${scene.end.toFixed(1)}s`}
-              style={{
-                left: `${left}%`,
-                width: `${width}%`,
-                background: `hsla(${hue}, 60%, 50%, 0.25)`,
-                borderRight: "1px solid rgba(0,0,0,0.3)",
-                fontFamily: "var(--font-mono)",
-                color: `hsla(${hue}, 70%, 70%, 0.9)`,
-              }}
-            >
-              {width > 4 && <span>{scene.id + 1}</span>}
-            </div>
-          );
-        })}
-      </div>
-      {/* Scene markers */}
-      <div className="flex flex-wrap gap-x-3 gap-y-1">
-        {scenes.map((scene) => (
-          <span
-            key={scene.id}
-            className="text-xs"
-            style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
-          >
-            <span style={{ color: "var(--text)" }}>S{scene.id + 1}</span>{" "}
-            {scene.start.toFixed(1)}–{scene.end.toFixed(1)}s
-            {scene.label && (
-              <span style={{ color: "#f59e0b" }}> · {scene.label}</span>
-            )}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ProjectPage() {
@@ -236,6 +177,16 @@ export default function ProjectPage() {
   // Local refined scenes (to update after save)
   const [refinedScenes, setRefinedScenes] = useState<Scene[] | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Playback state — lifted here so header/shell share it
+  const [currentTime, setCurrentTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const playerRef = useRef<HTMLVideoElement | null>(null);
+
+  const handleSeek = (t: number) => {
+    if (playerRef.current) playerRef.current.currentTime = t;
+    setCurrentTime(t);
+  };
 
   const fetchProject = useCallback(async () => {
     try {
@@ -324,48 +275,98 @@ export default function ProjectPage() {
       }, 2000);
     }
   }
+  // handleExtractStart is referenced inside EditorShell via onRefine flow;
+  // kept for completeness but not directly passed — suppress unused warning
+  void handleExtractStart;
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Sticky header (shared across all states) ──────────────────────────────
+
+  const header = (
+    <header
+      className="sticky top-0 z-20 flex items-center justify-between px-6 py-4"
+      style={{
+        height: 56,
+        background: "rgba(13,13,15,0.9)",
+        backdropFilter: "blur(12px)",
+        borderBottom: "1px solid var(--border)",
+        flexShrink: 0,
+      }}
+    >
+      <div className="flex items-center gap-3">
+        <Link
+          href="/"
+          className="flex items-center gap-1.5 text-xs transition-colors duration-150"
+          style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", textDecoration: "none" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--text)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-muted)"; }}
+        >
+          <span style={{ color: "#f59e0b" }}>←</span> projects
+        </Link>
+        <span style={{ color: "var(--border)" }}>/</span>
+        <span
+          className="text-xs font-medium"
+          style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}
+        >
+          {sourceName}
+        </span>
+      </div>
+      {status && <StatusBadge status={status} />}
+    </header>
+  );
+
+  // ── Editor layout (awaiting_refinement | done) ────────────────────────────
+
+  if (!loading && !fetchError && project && status && isEditorStatus(status)) {
+    // Guard: probe must be available before rendering the editor
+    if (!probe) {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+          {header}
+          <div className="flex flex-col items-center justify-center flex-1 gap-3">
+            <div
+              className="w-6 h-6 rounded-full border-2 animate-spin"
+              style={{ borderColor: "rgba(245,158,11,0.2)", borderTopColor: "#f59e0b" }}
+            />
+            <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+              Loading probe data...
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+        {header}
+        <EditorShell
+          projectId={id}
+          status={status}
+          probe={probe}
+          scenes={scenes}
+          refined={refined}
+          manifest={manifest}
+          onRefine={handleRefine}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          onTimeUpdate={setCurrentTime}
+          onPlayPauseChange={setIsPlaying}
+          onSeek={handleSeek}
+          playerRef={playerRef}
+        />
+      </div>
+    );
+  }
+
+  // ── Non-editor layout ─────────────────────────────────────────────────────
 
   return (
     <div className="relative flex flex-col min-h-screen" style={{ zIndex: 1 }}>
-      {/* Header */}
-      <header
-        className="sticky top-0 z-20 flex items-center justify-between px-6 py-4"
-        style={{
-          background: "rgba(13,13,15,0.9)",
-          backdropFilter: "blur(12px)",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <div className="flex items-center gap-3">
-          <Link
-            href="/"
-            className="flex items-center gap-1.5 text-xs transition-colors duration-150"
-            style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", textDecoration: "none" }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--text)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "var(--text-muted)"; }}
-          >
-            <span style={{ color: "#f59e0b" }}>←</span> projects
-          </Link>
-          <span style={{ color: "var(--border)" }}>/</span>
-          <span
-            className="text-xs font-medium"
-            style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}
-          >
-            {sourceName}
-          </span>
-        </div>
-        {status && <StatusBadge status={status} />}
-      </header>
+      {header}
 
-      {/* Main content */}
       <main className="flex-1 w-full max-w-4xl mx-auto px-4 py-8 flex flex-col gap-6">
         {/* Loading */}
         {loading && (
-          <div
-            className="flex flex-col items-center justify-center py-16 gap-3"
-          >
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
             <div
               className="w-6 h-6 rounded-full border-2 animate-spin"
               style={{
@@ -435,7 +436,7 @@ export default function ProjectPage() {
               </div>
             )}
 
-            {/* ── Status: probing/detecting ── */}
+            {/* ── Status: probing/detecting/queued ── */}
             {(status === "probing" || status === "detecting" || status === "queued") && (
               <div
                 className="rounded-lg px-4 py-6 flex flex-col items-center gap-4"
@@ -476,33 +477,6 @@ export default function ProjectPage() {
               </div>
             )}
 
-            {/* ── Status: awaiting_refinement ── */}
-            {status === "awaiting_refinement" && (
-              <div className="flex flex-col gap-4">
-                {/* Scene timeline */}
-                {probe && scenes.length > 0 && (
-                  <SceneTimeline scenes={scenes} duration={probe.duration} />
-                )}
-
-                {/* Scene list */}
-                {scenes.length > 0 && (
-                  <SceneList
-                    projectId={id}
-                    scenes={scenes}
-                    refined={refined}
-                    onRefine={handleRefine}
-                  />
-                )}
-
-                {/* Extract panel */}
-                <ExtractPanel
-                  projectId={id}
-                  scenes={scenes}
-                  onExtractStart={handleExtractStart}
-                />
-              </div>
-            )}
-
             {/* ── Status: extracting ── */}
             {status === "extracting" && (
               <div
@@ -533,91 +507,6 @@ export default function ProjectPage() {
                 <div className="w-full max-w-sm">
                   <ProgressBar progress={progress} />
                 </div>
-              </div>
-            )}
-
-            {/* ── Status: done ── */}
-            {status === "done" && manifest && (
-              <div className="flex flex-col gap-6">
-                {/* Global snippet */}
-                <SnippetCopy projectId={id} label="All frames snippet" />
-
-                {/* Per scene/segment */}
-                {manifest.scenes.map((scene) => (
-                  <div
-                    key={scene.id}
-                    className="flex flex-col gap-3 rounded-lg p-4"
-                    style={{ border: "1px solid var(--border)", background: "var(--surface)" }}
-                  >
-                    {/* Scene header */}
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="w-5 h-5 rounded flex items-center justify-center text-xs font-semibold flex-shrink-0"
-                        style={{
-                          background: "rgba(245,158,11,0.15)",
-                          color: "#f59e0b",
-                          fontFamily: "var(--font-mono)",
-                        }}
-                      >
-                        {scene.id + 1}
-                      </span>
-                      <span
-                        className="text-xs font-medium"
-                        style={{ color: "var(--text)", fontFamily: "var(--font-mono)" }}
-                      >
-                        Scene {scene.id + 1}
-                        {scene.label && (
-                          <span style={{ color: "#f59e0b" }}> · {scene.label}</span>
-                        )}
-                      </span>
-                      <span
-                        className="text-xs"
-                        style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
-                      >
-                        {scene.start.toFixed(1)}s – {scene.end.toFixed(1)}s
-                      </span>
-                    </div>
-
-                    {/* Per-segment frames + snippet */}
-                    {scene.segments.map((seg) => (
-                      <div key={seg.id} className="flex flex-col gap-2">
-                        {/* Segment label */}
-                        {scene.segments.length > 1 && (
-                          <span
-                            className="text-xs"
-                            style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
-                          >
-                            Segment {seg.id + 1}
-                            {" "}
-                            <span style={{ color: "var(--text-muted)" }}>
-                              ({seg.frames.length} frames)
-                            </span>
-                          </span>
-                        )}
-
-                        {/* Frame strip */}
-                        <FrameStrip
-                          projectId={id}
-                          sceneId={scene.id}
-                          segId={seg.id}
-                          frames={seg.frames}
-                        />
-
-                        {/* Snippet */}
-                        <SnippetCopy
-                          projectId={id}
-                          sceneId={scene.id}
-                          segId={seg.id}
-                          label={
-                            scene.label
-                              ? `${scene.label} · seg ${seg.id + 1}`
-                              : undefined
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ))}
               </div>
             )}
 
