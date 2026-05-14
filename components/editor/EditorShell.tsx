@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
-import { Group as PanelGroup, Panel, Separator as PanelHandle } from "react-resizable-panels";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import VideoViewer from "./VideoViewer";
 import Inspector from "./Inspector";
 import Timeline from "./Timeline";
@@ -32,13 +31,63 @@ export interface EditorShellProps {
   refined: boolean;
   manifest?: ProjectManifest | null;
   onRefine: (scenes: RefinedScene[]) => void;
-  // Playback state — lifted from parent page
   currentTime: number;
   isPlaying: boolean;
   onTimeUpdate: (t: number) => void;
   onPlayPauseChange: (playing: boolean) => void;
   onSeek: (t: number) => void;
   playerRef: React.RefObject<HTMLVideoElement | null>;
+}
+
+// ── Handle styles ─────────────────────────────────────────────────────────────
+
+const HANDLE_SIZE = 5; // px — thick enough to grab easily
+
+function hStyle(dir: "h" | "v"): React.CSSProperties {
+  return {
+    flexShrink: 0,
+    background: "var(--border)",
+    transition: "background 0.12s",
+    cursor: dir === "v" ? "col-resize" : "row-resize",
+    ...(dir === "v" ? { width: HANDLE_SIZE } : { height: HANDLE_SIZE }),
+    zIndex: 10,
+  };
+}
+
+// ── Custom drag hook ──────────────────────────────────────────────────────────
+
+function useDrag(
+  onDelta: (delta: number) => void,
+  axis: "x" | "y"
+) {
+  const dragging = useRef(false);
+  const last = useRef(0);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragging.current = true;
+      last.current = axis === "x" ? e.clientX : e.clientY;
+    },
+    [axis]
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!dragging.current) return;
+      const curr = axis === "x" ? e.clientX : e.clientY;
+      onDelta(curr - last.current);
+      last.current = curr;
+    },
+    [axis, onDelta]
+  );
+
+  const onPointerUp = useCallback(() => {
+    dragging.current = false;
+  }, []);
+
+  return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp };
 }
 
 // ── EditorShell ───────────────────────────────────────────────────────────────
@@ -52,13 +101,60 @@ export default function EditorShell({
   manifest,
   onRefine,
   currentTime,
-  isPlaying,
+  isPlaying: _isPlaying,
   onTimeUpdate,
   onPlayPauseChange,
   onSeek,
   playerRef,
 }: EditorShellProps) {
-  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  // Shell outer div ref — needed to compute percentages
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  // Sizes as pixel values; initialised on first render via layout effect
+  const [topH, setTopH] = useState<number | null>(null);   // height of top row (viewer+inspector)
+  const [inspW, setInspW] = useState<number | null>(null); // width of inspector panel
+
+  // Initialise once shell mounts
+  useEffect(() => {
+    if (!shellRef.current) return;
+    const h = shellRef.current.clientHeight;
+    const w = shellRef.current.clientWidth;
+    setTopH(Math.round(h * 0.75));
+    setInspW(Math.round(w * 0.30));
+  }, []);
+
+  // Vertical handle (viewer | inspector) — drag in X
+  const dragInspW = useCallback(
+    (delta: number) => {
+      setInspW((prev) => {
+        if (prev === null || !shellRef.current) return prev;
+        const totalW = shellRef.current.clientWidth;
+        const minInsp = 200;
+        const maxInsp = Math.round(totalW * 0.55);
+        return Math.max(minInsp, Math.min(maxInsp, prev - delta)); // subtract: dragging handle left increases inspector
+      });
+    },
+    []
+  );
+
+  // Horizontal handle (top row | timeline) — drag in Y
+  const dragTopH = useCallback(
+    (delta: number) => {
+      setTopH((prev) => {
+        if (prev === null || !shellRef.current) return prev;
+        const totalH = shellRef.current.clientHeight;
+        const minTop = Math.round(totalH * 0.40);
+        const maxTop = Math.round(totalH * 0.88);
+        return Math.max(minTop, Math.min(maxTop, prev + delta));
+      });
+    },
+    []
+  );
+
+  const vHandleDrag = useDrag(dragInspW, "x");
+  const hHandleDrag = useDrag(dragTopH, "y");
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
 
   useEffect(() => {
     const isInputFocused = () => {
@@ -68,106 +164,90 @@ export default function EditorShell({
 
     const handler = (e: KeyboardEvent) => {
       if (isInputFocused()) return;
-
       const video = playerRef.current;
 
       switch (e.key) {
         case " ": {
           e.preventDefault();
           if (!video) return;
-          if (video.paused) {
-            video.play();
-          } else {
-            video.pause();
-          }
+          video.paused ? video.play() : video.pause();
           break;
         }
-
         case "ArrowLeft": {
           e.preventDefault();
           if (!video) return;
           if (e.shiftKey) {
-            // Jump to previous scene boundary
-            const boundary = scenes
-              .map((s) => s.end)
-              .filter((t) => t < currentTime - 0.1)
-              .sort((a, b) => b - a)[0];
-            if (boundary !== undefined) {
-              video.currentTime = boundary;
-              onSeek(boundary);
-            }
+            const b = scenes.map((s) => s.end).filter((t) => t < currentTime - 0.1).sort((a, b) => b - a)[0];
+            if (b !== undefined) { video.currentTime = b; onSeek(b); }
           } else {
-            const next = Math.max(0, video.currentTime - 1 / probe.fps);
-            video.currentTime = next;
-            onSeek(next);
+            const n = Math.max(0, video.currentTime - 1 / probe.fps);
+            video.currentTime = n; onSeek(n);
           }
           break;
         }
-
         case "ArrowRight": {
           e.preventDefault();
           if (!video) return;
           if (e.shiftKey) {
-            // Jump to next scene boundary
-            const boundary = scenes
-              .map((s) => s.start)
-              .filter((t) => t > currentTime + 0.1)
-              .sort((a, b) => a - b)[0];
-            if (boundary !== undefined) {
-              video.currentTime = boundary;
-              onSeek(boundary);
-            }
+            const b = scenes.map((s) => s.start).filter((t) => t > currentTime + 0.1).sort((a, b) => a - b)[0];
+            if (b !== undefined) { video.currentTime = b; onSeek(b); }
           } else {
-            const next = Math.min(probe.duration, video.currentTime + 1 / probe.fps);
-            video.currentTime = next;
-            onSeek(next);
+            const n = Math.min(probe.duration, video.currentTime + 1 / probe.fps);
+            video.currentTime = n; onSeek(n);
           }
           break;
         }
-
         case "Home": {
           e.preventDefault();
           if (!video) return;
-          video.currentTime = 0;
-          onSeek(0);
+          video.currentTime = 0; onSeek(0);
           break;
         }
-
         case "End": {
           e.preventDefault();
           if (!video) return;
-          video.currentTime = probe.duration;
-          onSeek(probe.duration);
+          video.currentTime = probe.duration; onSeek(probe.duration);
           break;
         }
-
-        default:
-          break;
       }
     };
 
     document.addEventListener("keydown", handler);
-    return () => {
-      document.removeEventListener("keydown", handler);
-    };
+    return () => document.removeEventListener("keydown", handler);
   }, [currentTime, probe.fps, probe.duration, scenes, playerRef, onSeek]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  // Before size is measured, render invisible placeholder to avoid flash
+  const ready = topH !== null && inspW !== null;
 
   return (
-    <div style={{ height: "calc(100vh - 56px)", background: "var(--bg)" }}>
-      <PanelGroup
-        orientation="vertical"
-        style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}
-      >
-        {/* Top panel: Viewer + Inspector */}
-        <Panel defaultSize={75} minSize={50} style={{ overflow: "hidden" }}>
-          <PanelGroup
-            orientation="horizontal"
-            style={{ display: "flex", flexDirection: "row", height: "100%", width: "100%" }}
+    <div
+      ref={shellRef}
+      style={{
+        height: "calc(100vh - 56px)",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--bg)",
+        overflow: "hidden",
+        visibility: ready ? "visible" : "hidden",
+      }}
+    >
+      {ready && (
+        <>
+          {/* ── Top row: Viewer + Inspector ─────────────────────────────── */}
+          <div
+            style={{
+              height: topH,
+              flexShrink: 0,
+              display: "flex",
+              flexDirection: "row",
+              overflow: "hidden",
+            }}
           >
-            {/* Viewer */}
-            <Panel defaultSize={70} minSize={40} style={{ overflow: "hidden" }}>
+            {/* Viewer — fills remaining width */}
+            <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
               <VideoViewer
                 ref={playerRef}
                 projectId={projectId}
@@ -175,23 +255,18 @@ export default function EditorShell({
                 onTimeUpdate={onTimeUpdate}
                 onPlayPauseChange={onPlayPauseChange}
               />
-            </Panel>
+            </div>
 
             {/* Vertical drag handle */}
-            <PanelHandle
-              style={{
-                width: 5,
-                background: "var(--border)",
-                cursor: "col-resize",
-                flexShrink: 0,
-                transition: "background 0.15s",
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f59e0b"; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--border)"; }}
+            <div
+              {...vHandleDrag}
+              style={hStyle("v")}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "#f59e0b"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "var(--border)"; }}
             />
 
-            {/* Inspector */}
-            <Panel defaultSize={30} minSize={20} maxSize={45} style={{ overflow: "hidden" }}>
+            {/* Inspector — fixed width, draggable */}
+            <div style={{ width: inspW, flexShrink: 0, overflow: "hidden" }}>
               <Inspector
                 projectId={projectId}
                 status={status}
@@ -202,33 +277,28 @@ export default function EditorShell({
                 currentTime={currentTime}
                 onSeek={onSeek}
               />
-            </Panel>
-          </PanelGroup>
-        </Panel>
+            </div>
+          </div>
 
-        {/* Horizontal drag handle */}
-        <PanelHandle
-          style={{
-            height: 5,
-            background: "var(--border)",
-            cursor: "row-resize",
-            flexShrink: 0,
-            transition: "background 0.15s",
-          }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#f59e0b"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--border)"; }}
-        />
-
-        {/* Bottom panel: Timeline */}
-        <Panel defaultSize={25} minSize={12} maxSize={40} style={{ overflow: "hidden" }}>
-          <Timeline
-            duration={probe.duration}
-            currentTime={currentTime}
-            scenes={scenes}
-            onSeek={onSeek}
+          {/* ── Horizontal drag handle ──────────────────────────────────── */}
+          <div
+            {...hHandleDrag}
+            style={hStyle("h")}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "#f59e0b"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "var(--border)"; }}
           />
-        </Panel>
-      </PanelGroup>
+
+          {/* ── Timeline — fills remaining height ──────────────────────── */}
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+            <Timeline
+              duration={probe.duration}
+              currentTime={currentTime}
+              scenes={scenes}
+              onSeek={onSeek}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }
