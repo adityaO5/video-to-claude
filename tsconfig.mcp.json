@@ -9,5 +9,5 @@
     "noEmit": false
   },
   "include": ["mcp/**/*", "lib/paths.ts"],
-  "exclude": ["node_modules", "app", "components"]
+  "exclude": ["node_modules", "app", "components", "mcp/dist"]
 }

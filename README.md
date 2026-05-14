@@ -63,6 +63,8 @@ Make sure `npm run dev` is running before using Claude Code MCP tools.
 | `get_frame_paths` | Get absolute paths to extracted frames |
 | `get_snippet` | Get a ready-to-paste Claude Code prompt |
 | `preview_frame` | Get a single frame at a timestamp |
+| `analyze_with_claude` | Send frames to Claude vision API and get analysis |
+| `get_compressed_snippet` | Get a token-efficient snippet with `$ROOT` path alias |
 
 ## Example Claude Code workflow
 
@@ -74,3 +76,33 @@ Upload and analyze a video:
 4. Use get_frame_paths to get the image paths
 5. Use Read tool on each path to analyze frames
 ```
+
+## Analyzing frames with Claude
+
+After extracting frames, use the MCP tools to analyze them:
+
+```
+# Analyze all scenes
+analyze_with_claude projectId=abc123
+
+# Analyze a specific scene
+analyze_with_claude projectId=abc123 sceneId=2
+
+# Custom prompt
+analyze_with_claude projectId=abc123 sceneId=0 prompt="What UI elements are visible?"
+```
+
+Requires `ANTHROPIC_API_KEY` set in `.env.local`:
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### Token compression
+
+Use `get_compressed_snippet` to get a token-efficient version of the frame paths (replaces long common prefix with `$ROOT` alias):
+
+```
+get_compressed_snippet projectId=abc123 sceneId=0 segId=0
+```
+
+Returns snippet with ~30-40 fewer tokens per frame path.

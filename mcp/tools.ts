@@ -276,4 +276,96 @@ export const tools: McpTool[] = [
       return textResult(outPath);
     },
   },
+
+  // ── 9. analyze_with_claude ──────────────────────────────────────────────────
+  {
+    name: "analyze_with_claude",
+    description:
+      "Analyze extracted video frames by sending them to Claude's vision API. " +
+      "Loads frames from disk, encodes as base64, calls claude-opus-4-7, returns analysis text. " +
+      "Requires ANTHROPIC_API_KEY to be set. Caps at 20 frames per call.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        projectId: { type: "string", description: "Project ID" },
+        sceneId: { type: "number", description: "Optional scene index (0-based). Omit for all scenes." },
+        segId: { type: "number", description: "Optional segment index (0-based). Omit for all segments." },
+        prompt: { type: "string", description: "Custom analysis prompt. Defaults to general frame analysis." },
+      },
+      required: ["projectId"],
+    },
+    async handler(args) {
+      const { projectId, sceneId, segId, prompt } = args as {
+        projectId: string;
+        sceneId?: number;
+        segId?: number;
+        prompt?: string;
+      };
+
+      const result = await apiPost<{
+        analysis: string;
+        model: string;
+        frameCount: number;
+        inputTokens: number;
+        outputTokens: number;
+      }>(`/api/projects/${projectId}/analyze`, { sceneId, segId, prompt });
+
+      const text =
+        `## Claude Vision Analysis\n\n` +
+        `**Model:** ${result.model}  |  **Frames analyzed:** ${result.frameCount}  |  ` +
+        `**Tokens used:** ${result.inputTokens} in / ${result.outputTokens} out\n\n` +
+        result.analysis;
+
+      return { content: [{ type: "text", text }] };
+    },
+  },
+
+  // ── 10. get_compressed_snippet ──────────────────────────────────────────────
+  {
+    name: "get_compressed_snippet",
+    description:
+      "Get a token-compressed snippet for the specified frames. " +
+      "Uses $ROOT alias to shorten repeated path prefixes. " +
+      "Useful for manually pasting into Claude Code with fewer tokens.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        projectId: { type: "string", description: "Project ID" },
+        sceneId: { type: "number", description: "Optional scene index" },
+        segId: { type: "number", description: "Optional segment index" },
+      },
+      required: ["projectId"],
+    },
+    async handler(args) {
+      const { projectId, sceneId, segId } = args as {
+        projectId: string;
+        sceneId?: number;
+        segId?: number;
+      };
+
+      const params = new URLSearchParams();
+      if (sceneId !== undefined) params.set("scene", String(sceneId));
+      if (segId !== undefined) params.set("seg", String(segId));
+      const query = params.toString() ? `?${params.toString()}` : "";
+
+      const snippet = await apiGetText(`/api/projects/${projectId}/snippet${query}`);
+
+      // Extract first file path to determine the common prefix
+      const pathMatch = snippet.match(/([A-Za-z]:[\\\/][^\n]+\.webp)/);
+      if (pathMatch) {
+        const fullPath = pathMatch[1].replace(/\\/g, "/");
+        const framesIdx = fullPath.indexOf("/frames/");
+        if (framesIdx !== -1) {
+          const rootPrefix = fullPath.substring(0, framesIdx + 8); // includes "/frames/"
+          const escaped = rootPrefix.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+          const escapedBackslash = rootPrefix.replace(/\//g, "\\").replace(/[.*+?^${}()|[\]]/g, "\\$&");
+          const compressed = snippet
+            .replace(new RegExp(escaped, "gi"), "$ROOT/")
+            .replace(new RegExp(escapedBackslash, "gi"), "$ROOT\\");
+          return textResult(`$ROOT = ${rootPrefix}\n\n${compressed}`);
+        }
+      }
+      return textResult(snippet);
+    },
+  },
 ];
