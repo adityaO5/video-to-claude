@@ -1,4 +1,5 @@
 import { writeFile } from "fs/promises";
+import path from "path";
 import type { ProjectManifest } from "./manifest";
 import { snippetFile, projectDir } from "./paths";
 
@@ -87,6 +88,27 @@ function buildSnippetFromManifest(
 
   void projectAbsDir;
   return lines.join("\n") + "\n";
+}
+
+/**
+ * Compress a snippet by replacing the long common path prefix with a $ROOT alias.
+ * Reduces token count by ~30-40 tokens per frame path.
+ */
+export function compressSnippet(snippet: string, projectAbsDir: string): string {
+  const framesRoot = path.join(projectAbsDir, "frames");
+  // Normalize to forward slashes for consistency
+  const normalizedRoot = framesRoot.replace(/\\/g, "/");
+  const compressed = snippet.replace(
+    new RegExp(normalizedRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+    "$ROOT"
+  );
+  // Also try backslash version on Windows
+  const backslashRoot = framesRoot.replace(/\//g, "\\");
+  const final = compressed.replace(
+    new RegExp(backslashRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+    "$ROOT"
+  );
+  return `$ROOT = ${normalizedRoot}\n\n${final}`;
 }
 
 export async function buildSnippetFile(

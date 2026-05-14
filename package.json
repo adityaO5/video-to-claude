@@ -11,6 +11,7 @@
     "mcp:start": "node mcp/dist/mcp/server.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
     "@base-ui/react": "^1.4.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "class-variance-authority": "^0.7.1",
