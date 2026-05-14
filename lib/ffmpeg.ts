@@ -1,10 +1,10 @@
-import ffmpegPath from "ffmpeg-static";
 import { spawn } from "child_process";
 import { mkdir } from "fs/promises";
 import path from "path";
 
-// ffmpeg-static types: the default export is string | null
-const bin = ffmpegPath as string;
+// Use require to get the real runtime path — avoids bundler mangling __dirname inside ffmpeg-static
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const bin: string = require("ffmpeg-static");
 
 export interface ProbeResult {
   duration: number; // seconds
