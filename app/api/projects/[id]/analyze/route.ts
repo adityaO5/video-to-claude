@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { readFile } from "fs/promises";
-import { projectDir, framesManifest } from "@/lib/paths";
+import { framesManifest } from "@/lib/paths";
 import type { ProjectManifest } from "@/lib/manifest";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 export async function POST(
   request: Request,
@@ -19,6 +16,11 @@ export async function POST(
     );
   }
 
+  // Lazy init — avoid module-level instantiation so key is available at request time
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const Anthropic = require("@anthropic-ai/sdk").default;
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
   const body = (await request.json()) as {
     sceneId?: number;
     segId?: number;
@@ -30,9 +32,11 @@ export async function POST(
   try {
     const raw = await readFile(framesManifest(id), "utf8");
     manifest = JSON.parse(raw);
-  } catch {
-    return NextResponse.json({ error: "No frames extracted yet" }, { status: 400 });
+  } catch (e) {
+    return NextResponse.json({ error: "No frames extracted yet", detail: String(e) }, { status: 400 });
   }
+
+  try {
 
   // Collect frames to analyze
   const framePaths: string[] = [];
@@ -54,7 +58,7 @@ export async function POST(
   const capped = framePaths.slice(0, 20);
 
   // Load images as base64
-  const imageContents: Anthropic.ImageBlockParam[] = await Promise.all(
+  const imageContents = await Promise.all(
     capped.map(async (p) => {
       const buf = await readFile(p);
       return {
@@ -90,15 +94,19 @@ export async function POST(
   });
 
   const analysis = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as Anthropic.TextBlock).text)
+    .filter((b: { type: string }) => b.type === "text")
+    .map((b: { type: string; text: string }) => b.text)
     .join("\n");
 
-  return NextResponse.json({
-    analysis,
-    model: response.model,
-    frameCount: capped.length,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
-  });
+    return NextResponse.json({
+      analysis,
+      model: response.model,
+      frameCount: capped.length,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    });
+  } catch (e) {
+    console.error("[analyze] error:", e);
+    return NextResponse.json({ error: "Analysis failed", detail: String(e) }, { status: 500 });
+  }
 }
