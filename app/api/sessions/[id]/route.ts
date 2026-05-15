@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/captureSession";
+import path from "path";
+import { getSession, capturesDir, sessionRoot } from "@/lib/captureSession";
 
 export async function GET(
   _req: NextRequest,
@@ -8,5 +9,9 @@ export async function GET(
   const { id } = await context.params;
   const s = await getSession(id);
   if (!s) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json(s);
+  return NextResponse.json({
+    ...s,
+    capturesPath: path.resolve(capturesDir(id)),
+    sessionPath: path.resolve(sessionRoot(id)),
+  });
 }

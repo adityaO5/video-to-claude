@@ -1,12 +1,22 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+
+export interface UploadProgress {
+  pct: number;         // 0..1
+  uploadedBytes: number;
+  totalBytes: number;
+  phase: "uploading" | "probing";
+}
 
 export interface UploadDropzoneProps {
   onUploading?: () => void;
   onUploadSuccess?: (projectId: string) => void;
-  onUploadOverride?: (file: File) => Promise<void>;
+  onUploadOverride?: (
+    file: File,
+    onProgress: (p: UploadProgress) => void
+  ) => Promise<void>;
 }
 
 type DropzoneState = "idle" | "dragover" | "selected" | "uploading" | "error";
@@ -23,6 +33,12 @@ export function UploadDropzone({ onUploading, onUploadSuccess, onUploadOverride 
   const [state, setState] = useState<DropzoneState>("idle");
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState<string>("");
+  const [progress, setProgress] = useState<UploadProgress>({
+    pct: 0,
+    uploadedBytes: 0,
+    totalBytes: 0,
+    phase: "uploading",
+  });
 
   const acceptFile = useCallback((f: File) => {
     if (!f.type.startsWith("video/")) {
@@ -73,7 +89,8 @@ export function UploadDropzone({ onUploading, onUploadSuccess, onUploadOverride 
 
     if (onUploadOverride) {
       try {
-        await onUploadOverride(file);
+        setProgress({ pct: 0, uploadedBytes: 0, totalBytes: file.size, phase: "uploading" });
+        await onUploadOverride(file, setProgress);
         // Parent handles UI transition (reloads session state).
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed");
@@ -144,18 +161,18 @@ export function UploadDropzone({ onUploading, onUploadSuccess, onUploadOverride 
         className="relative w-full cursor-pointer select-none overflow-hidden rounded-lg transition-all duration-200"
         style={{
           background: isDragover
-            ? "rgba(245,158,11,0.06)"
+            ? "rgba(245,158,11,0.05)"
             : isSelected
-              ? "rgba(245,158,11,0.03)"
-              : "rgba(26,26,30,0.7)",
-          border: `1.5px dashed ${
+              ? "rgba(245,158,11,0.02)"
+              : "rgba(255,255,255,0.02)",
+          border: `1px dashed ${
             isDragover
-              ? "#f59e0b"
+              ? "rgba(245,158,11,0.7)"
               : isSelected
-                ? "rgba(245,158,11,0.5)"
+                ? "rgba(245,158,11,0.4)"
                 : isError
-                  ? "#ef4444"
-                  : "#3a3a3e"
+                  ? "rgba(239,68,68,0.5)"
+                  : "rgba(255,255,255,0.1)"
           }`,
           boxShadow: isDragover
             ? "0 0 0 3px rgba(245,158,11,0.15), inset 0 0 60px rgba(245,158,11,0.04)"
@@ -171,19 +188,44 @@ export function UploadDropzone({ onUploading, onUploadSuccess, onUploadOverride 
                 className="w-12 h-12 rounded-full border-2 border-t-transparent animate-spin"
                 style={{ borderColor: "rgba(245,158,11,0.3)", borderTopColor: "#f59e0b" }}
               />
-              <div className="flex flex-col items-center gap-1">
+              <div className="flex flex-col items-center gap-2 w-full max-w-sm">
                 <span
                   className="text-sm tracking-widest uppercase"
                   style={{ color: "#f59e0b", fontFamily: "var(--font-mono)" }}
                 >
-                  Uploading
+                  {progress.phase === "probing" ? "Probing" : "Uploading"}
                 </span>
                 <span
-                  className="text-xs"
+                  className="text-xs truncate max-w-full"
                   style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+                  title={file?.name}
                 >
                   {file?.name}
                 </span>
+                {progress.phase === "uploading" && progress.totalBytes > 0 && (
+                  <>
+                    <div
+                      className="w-full h-1 rounded-full overflow-hidden mt-1"
+                      style={{ background: "rgba(245,158,11,0.12)" }}
+                    >
+                      <div
+                        style={{
+                          width: `${Math.round(progress.pct * 100)}%`,
+                          height: "100%",
+                          background: "#f59e0b",
+                          transition: "width 150ms",
+                        }}
+                      />
+                    </div>
+                    <span
+                      className="text-xs"
+                      style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+                    >
+                      {Math.round(progress.pct * 100)}% · {formatBytes(progress.uploadedBytes)} / {formatBytes(progress.totalBytes)}
+                    </span>
+                  </>
+                )}
+                {progress.phase === "probing" && <ProbingStatus />}
               </div>
             </>
           ) : isSelected && file ? (
@@ -283,20 +325,32 @@ export function UploadDropzone({ onUploading, onUploadSuccess, onUploadOverride 
       {isSelected && file && (
         <button
           onClick={handleUpload}
-          className="w-full h-11 rounded-lg text-sm font-semibold tracking-wide transition-all duration-150 active:scale-[0.99]"
+          className="w-full rounded-lg transition-all duration-200 active:scale-[0.99]"
           style={{
-            background: "#f59e0b",
-            color: "#0d0d0f",
-            fontFamily: "var(--font-sans)",
+            background: "transparent",
+            border: "1px solid rgba(245,158,11,0.55)",
+            color: "#f59e0b",
+            padding: "11px 0",
+            fontSize: 13,
+            fontWeight: 500,
+            letterSpacing: "-0.01em",
+            cursor: "pointer",
+            fontFamily: "var(--font-system, system-ui)",
           }}
           onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "#fbbf24";
+            const el = e.currentTarget as HTMLButtonElement;
+            el.style.background = "rgba(245,158,11,0.08)";
+            el.style.borderColor = "rgba(245,158,11,0.8)";
+            el.style.boxShadow = "0 0 16px rgba(245,158,11,0.12)";
           }}
           onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = "#f59e0b";
+            const el = e.currentTarget as HTMLButtonElement;
+            el.style.background = "transparent";
+            el.style.borderColor = "rgba(245,158,11,0.55)";
+            el.style.boxShadow = "none";
           }}
         >
-          Upload &amp; Process
+          Open Timeline →
         </button>
       )}
 
@@ -309,6 +363,52 @@ export function UploadDropzone({ onUploading, onUploadSuccess, onUploadOverride 
         onChange={handleInputChange}
         aria-hidden="true"
       />
+    </div>
+  );
+}
+
+const PROBE_MESSAGES = [
+  "Reading video metadata…",
+  "Detecting frame rate…",
+  "Inspecting streams…",
+  "Mapping container…",
+  "Almost there…",
+  "Still working — large files take a moment…",
+  "Hang tight — finishing up…",
+];
+
+function ProbingStatus() {
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number>(Date.now());
+  useEffect(() => {
+    startRef.current = Date.now();
+    const iv = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
+    }, 250);
+    return () => clearInterval(iv);
+  }, []);
+  // Rotate every ~3s; clamp to last message after exhausting list
+  const msgIdx = Math.min(Math.floor(elapsed / 3), PROBE_MESSAGES.length - 1);
+  const msg = PROBE_MESSAGES[msgIdx];
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <span
+        className="text-xs"
+        style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+      >
+        {msg}
+      </span>
+      <span
+        className="text-xs"
+        style={{
+          color: "rgba(245,158,11,0.55)",
+          fontFamily: "var(--font-mono)",
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: "0.04em",
+        }}
+      >
+        {elapsed}s elapsed
+      </span>
     </div>
   );
 }

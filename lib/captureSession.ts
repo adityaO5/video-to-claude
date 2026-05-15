@@ -21,6 +21,15 @@ export interface Capture {
   path: string;
   bytes: number;
   shapes: Shape[];
+  compressedPath?: string;
+  compressedBytes?: number;
+}
+
+export interface CompressionStats {
+  originalTotalBytes: number;
+  compressedTotalBytes: number;
+  savedBytes: number;
+  count: number;
 }
 
 export interface CaptureSession {
@@ -30,6 +39,7 @@ export interface CaptureSession {
   source: SessionSource | null;
   captures: Capture[];
   sentAt: number | null;
+  compressionStats?: CompressionStats;
 }
 
 let SESSIONS_ROOT = path.join(process.cwd(), "data", "sessions");
@@ -141,11 +151,16 @@ export async function deleteCapture(
   return writeMeta(s);
 }
 
-export async function markSent(id: string): Promise<CaptureSession> {
+export async function markSent(
+  id: string,
+  opts?: { updatedCaptures?: Capture[]; compressionStats?: CompressionStats }
+): Promise<CaptureSession> {
   const s = await readMeta(id);
   if (!s) throw new Error("session not found");
   if (s.status === "sent") throw new Error("session already sent");
   if (s.captures.length === 0) throw new Error("no captures to send");
+  if (opts?.updatedCaptures) s.captures = opts.updatedCaptures;
+  if (opts?.compressionStats) s.compressionStats = opts.compressionStats;
   s.status = "sent";
   s.sentAt = Date.now();
   return writeMeta(s);

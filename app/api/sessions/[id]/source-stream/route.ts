@@ -37,7 +37,7 @@ export async function GET(
         "Content-Type": mime,
         "Content-Length": String(fileSize),
         "Accept-Ranges": "bytes",
-        "Cache-Control": "no-store",
+        "Cache-Control": "private, max-age=3600, must-revalidate",
       },
     });
   }
@@ -60,7 +60,7 @@ export async function GET(
       "Content-Length": String(chunk),
       "Content-Range": `bytes ${start}-${end}/${fileSize}`,
       "Accept-Ranges": "bytes",
-      "Cache-Control": "no-store",
+      "Cache-Control": "private, max-age=3600, must-revalidate",
     },
   });
 }

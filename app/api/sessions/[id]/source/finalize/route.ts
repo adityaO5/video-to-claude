@@ -1,26 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile } from "fs/promises";
+import { existsSync } from "fs";
 import path from "path";
 import { getSession, setSource, sessionRoot } from "@/lib/captureSession";
 import { probeVideo } from "@/lib/probe";
+import { ALLOWED_MIMES, extForMime } from "@/lib/uploadMime";
 
 export const runtime = "nodejs";
-
-const ALLOWED_MIMES = new Set([
-  "video/mp4",
-  "video/webm",
-  "video/quicktime",
-  "video/x-matroska",
-  "video/x-msvideo",
-]);
-
-const EXT_FOR_MIME: Record<string, string> = {
-  "video/mp4": "mp4",
-  "video/webm": "webm",
-  "video/quicktime": "mov",
-  "video/x-matroska": "mkv",
-  "video/x-msvideo": "avi",
-};
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 export async function POST(
   request: NextRequest,
@@ -33,20 +20,26 @@ export async function POST(
     return NextResponse.json({ error: "Session already has a source" }, { status: 409 });
   }
 
-  const form = await request.formData();
-  const file = form.get("video");
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "No video file in form field 'video'" }, { status: 400 });
-  }
-  if (!ALLOWED_MIMES.has(file.type)) {
-    return NextResponse.json({ error: `Unsupported mime ${file.type}` }, { status: 415 });
+  const body = (await request.json().catch(() => ({}))) as {
+    name?: string;
+    mime?: string;
+  };
+  const name = body.name ?? "video";
+  const mime = body.mime ?? "video/mp4";
+  if (!ALLOWED_MIMES.has(mime)) {
+    return NextResponse.json({ error: `Unsupported mime ${mime}` }, { status: 415 });
   }
 
-  const ext = EXT_FOR_MIME[file.type] ?? "mp4";
+  const ext = extForMime(mime);
   const sourcePath = path.join(sessionRoot(id), `source.${ext}`);
-  const buf = Buffer.from(await file.arrayBuffer());
-  await writeFile(sourcePath, buf);
+  if (!existsSync(sourcePath)) {
+    return NextResponse.json({ error: "Source file missing — upload chunks first" }, { status: 400 });
+  }
 
+  // Probe only — no blocking faststart remux. Browser handles non-faststart
+  // MP4 via HTTP Range requests; our source-stream route caches ranges so
+  // initial moov-tail fetch happens once. Remuxing 1GB to "optimize" would
+  // block finalize for tens of seconds with marginal benefit.
   let probe;
   try {
     probe = await probeVideo(sourcePath);
@@ -58,7 +51,7 @@ export async function POST(
   }
 
   const updated = await setSource(id, {
-    name: file.name,
+    name,
     ext,
     duration: probe.duration,
     width: probe.width,
