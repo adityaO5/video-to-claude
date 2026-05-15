@@ -44,7 +44,7 @@ async function findOurServer(): Promise<string | null> {
   for (const port of SCAN_PORTS) {
     try {
       const url = `http://localhost:${port}`;
-      const res = await fetch(`${url}/api/sessions/_ping`, {
+      const res = await fetch(`${url}/api/sessions/ping`, {
         signal: AbortSignal.timeout(1500),
       });
       if (res.ok) {

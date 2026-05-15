@@ -7,6 +7,8 @@ export async function GET(
   context: { params: Promise<{ id: string }> }
 ) {
   const { id } = await context.params;
+  if (id === "_ping" || id === "ping")
+    return NextResponse.json({ ok: true, app: "video-to-claude" });
   const s = await getSession(id);
   if (!s) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json({
