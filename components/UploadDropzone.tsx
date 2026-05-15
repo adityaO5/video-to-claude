@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 export interface UploadDropzoneProps {
   onUploading?: () => void;
+  onUploadSuccess?: (projectId: string) => void;
+  onUploadOverride?: (file: File) => Promise<void>;
 }
 
 type DropzoneState = "idle" | "dragover" | "selected" | "uploading" | "error";
@@ -15,7 +17,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function UploadDropzone({ onUploading }: UploadDropzoneProps) {
+export function UploadDropzone({ onUploading, onUploadSuccess, onUploadOverride }: UploadDropzoneProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<DropzoneState>("idle");
@@ -69,6 +71,17 @@ export default function UploadDropzone({ onUploading }: UploadDropzoneProps) {
     setState("uploading");
     onUploading?.();
 
+    if (onUploadOverride) {
+      try {
+        await onUploadOverride(file);
+        // Parent handles UI transition (reloads session state).
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Upload failed");
+        setState("error");
+      }
+      return;
+    }
+
     const formData = new FormData();
     formData.append("video", file);
 
@@ -84,12 +97,16 @@ export default function UploadDropzone({ onUploading }: UploadDropzoneProps) {
       }
 
       const data = (await res.json()) as { projectId: string };
-      router.push(`/projects/${data.projectId}`);
+      if (onUploadSuccess) {
+        onUploadSuccess(data.projectId);
+      } else {
+        router.push(`/projects/${data.projectId}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
       setState("error");
     }
-  }, [file, onUploading, router]);
+  }, [file, onUploading, onUploadOverride, onUploadSuccess, router]);
 
   const handleZoneClick = () => {
     if (state === "idle" || state === "error") {
@@ -338,3 +355,5 @@ function FilmIcon() {
     </svg>
   );
 }
+
+export default UploadDropzone;
