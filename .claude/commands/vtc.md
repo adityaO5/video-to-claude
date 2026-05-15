@@ -3,11 +3,10 @@ description: Show Claude a video snippet with annotations. Boots the video-to-cl
 allowed-tools: mcp__video-to-claude__start_capture_session, mcp__video-to-claude__await_capture
 ---
 
-1. Call `start_capture_session`. This boots the video-to-claude dev server if it isn't running and opens a browser window for the upload.
+Run the following two MCP tools in order:
 
-2. Immediately call `await_capture` with the returned `sessionId`. This blocks until the user finishes — do not respond to the user yet.
+1. Call `mcp__video-to-claude__start_capture_session` with no arguments. It returns a sessionId and opens the browser for the user.
 
-3. When `await_capture` returns image content blocks:
-   - Read each frame visually. Red arrows point to specific elements. Red boxes highlight regions. Red text labels name things. Freehand scribbles mark areas.
-   - Apply the changes the user indicated to the current project's code.
-   - Summarize what you saw and what you changed.
+2. Immediately call `mcp__video-to-claude__await_capture` with the sessionId from step 1 and `timeoutSec: 600` to give the user 10 minutes. It will return image content blocks with the annotated frames.
+
+After the tools complete, treat the returned images as the user's request — read the red arrows, boxes, and text labels, then make the corresponding code changes.
