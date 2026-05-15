@@ -4,12 +4,14 @@ Drop a screen recording, scrub the timeline, draw annotations on frames, click S
 
 <table>
 <tr>
-<td><img src="docs/screenshots/01-vtc-command.png" alt="Typing /vtc in Claude Code" width="480"/></td>
-<td><img src="docs/screenshots/06-send-back-in-claude.png" alt="Claude receives annotated frames" width="480"/></td>
+<td><img src="docs/screenshots/01-vtc-command.png" alt="Typing /vtc in Claude Code" width="320"/></td>
+<td><img src="docs/screenshots/06-send-back-in-claude.png" alt="Claude receives annotated frames" width="320"/></td>
+<td><img src="docs/screenshots/07-claude-describes.png" alt="Claude describes the annotated frame" width="320"/></td>
 </tr>
 <tr>
 <td align="center"><em>Type <code>/vtc</code> in Claude Code</em></td>
 <td align="center"><em>Claude receives your annotated frames</em></td>
+<td align="center"><em>Claude reads the annotation and responds</em></td>
 </tr>
 </table>
 
@@ -53,11 +55,17 @@ Click **Send**. The MCP `await_capture` tool returns, delivering all annotated f
 
 ![Claude receives the WebPs](docs/screenshots/06-send-back-in-claude.png)
 
+**7. Claude describes what it sees**
+
+Claude reads the annotation — the red arrow, the circled element, or the text label — and responds directly to what you marked. No re-explaining needed.
+
+![Claude describes the annotated frame](docs/screenshots/07-claude-describes.png)
+
 ---
 
 ## Prerequisites
 
-- **Node.js 18+** (Node 24 recommended)
+- **Node.js 20+** (Node 24 recommended)
 - **Claude Code CLI** installed ([install guide](https://claude.ai/download))
 - Windows, macOS, or Linux
 - No Python, no ffmpeg in PATH needed — both are bundled
@@ -103,7 +111,17 @@ Replace `/ABSOLUTE/PATH/TO/video-to-claude` with the real path.
 
 ### Option C — project scope (`.claude/commands/vtc.md`)
 
-The repo already ships `.claude/commands/vtc.md`. If you open Claude Code inside the cloned directory, the `/vtc` slash command is available immediately after registering the MCP server above.
+The repo ships `.claude/commands/vtc.md`. Claude Code loads project-scoped slash commands only when your working directory is (or is inside) the cloned repo, so `/vtc` only appears when you open Claude Code there.
+
+**To use `/vtc` from any directory**, copy the command file to your user-level commands folder:
+
+```bash
+# macOS / Linux
+cp .claude/commands/vtc.md ~/.claude/commands/vtc.md
+
+# Windows (PowerShell)
+Copy-Item .claude\commands\vtc.md $HOME\.claude\commands\vtc.md
+```
 
 Restart Claude Code after any config change.
 
