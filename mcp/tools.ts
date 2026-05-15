@@ -1,371 +1,154 @@
-import { readFileSync, writeFileSync } from "fs";
-import os from "os";
+import { readFile } from "fs/promises";
+import { exec, spawn } from "child_process";
 import path from "path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { apiGet, apiPost, apiPostFormData, apiGetText, apiGetBinary } from "./client.js";
+import { apiGet, apiPost } from "./client.js";
 
-type ToolContent = { content: [{ type: "text"; text: string }] };
+const BASE_URL = process.env.VIDEO_TO_CLAUDE_URL ?? "http://localhost:3000";
+const VTC_ROOT = path.resolve(__dirname, "..", "..", "..");
+
+type TextContent = { type: "text"; text: string };
+type ImageContent = { type: "image"; data: string; mimeType: string };
+type ToolContent = { content: Array<TextContent | ImageContent> };
 
 function textResult(text: string): ToolContent {
   return { content: [{ type: "text", text }] };
 }
 
-interface StatusData {
-  status: string;
-  progress: number;
-  error?: string;
+interface CaptureRecord {
+  idx: number;
+  t: number;
+  path: string;
+  bytes: number;
 }
 
-interface ProjectManifest {
-  projectId: string;
-  sourceName: string;
-  scenes: Array<{
-    id: number;
-    start: number;
-    end: number;
-    label?: string;
-    segments: Array<{
-      id: number;
-      frames: Array<{
-        idx: number;
-        path: string;
-        t: number;
-        width: number;
-        height: number;
-        bytes: number;
-      }>;
-    }>;
-  }>;
-}
-
-interface ProjectStateResponse {
+interface SessionRecord {
   id: string;
-  status: StatusData;
-  manifest?: ProjectManifest;
+  status: "waiting" | "ready" | "sent";
+  captures: CaptureRecord[];
 }
 
-// We extend Tool with a typed handler
+async function isDevServerUp(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/sessions/_ping`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    return res.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureDevServer(): Promise<void> {
+  if (await isDevServerUp()) return;
+  const child = spawn("npm", ["run", "dev"], {
+    cwd: VTC_ROOT,
+    detached: true,
+    stdio: "ignore",
+    shell: true,
+  });
+  child.unref();
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    await new Promise<void>((r) => setTimeout(r, 1500));
+    if (await isDevServerUp()) return;
+  }
+  throw new Error("Dev server did not start within 30 seconds");
+}
+
+function openBrowser(url: string): void {
+  const platform = process.platform;
+  if (platform === "win32") exec(`start "" "${url}"`);
+  else if (platform === "darwin") exec(`open "${url}"`);
+  else exec(`xdg-open "${url}"`);
+}
+
 interface McpTool extends Tool {
   handler(args: Record<string, unknown>): Promise<ToolContent>;
 }
 
 export const tools: McpTool[] = [
-  // ── 1. list_projects ────────────────────────────────────────────────────────
   {
-    name: "list_projects",
-    description: "List all processed video projects.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      required: [],
-    },
+    name: "start_capture_session",
+    description:
+      "Boot the video-to-claude UI (auto-starts dev server if not running), create a capture session, open the browser. " +
+      "Returns the sessionId; pass it to await_capture and wait for the user to upload + capture + send.",
+    inputSchema: { type: "object", properties: {}, required: [] },
     async handler(_args) {
-      const projects = await apiGet<unknown[]>("/api/projects");
-      return textResult(JSON.stringify(projects, null, 2));
+      await ensureDevServer();
+      const created = await apiPost<{ sessionId: string }>("/api/sessions", {});
+      const sessionId = created.sessionId;
+      const url = `${BASE_URL}/capture/${sessionId}`;
+      openBrowser(url);
+      return textResult(
+        `Capture session started.\n` +
+          `Session ID: ${sessionId}\n` +
+          `URL: ${url}\n\n` +
+          `Now call await_capture with sessionId="${sessionId}" and wait while the user uploads a video, ` +
+          `scrubs the timeline, annotates with arrows/boxes/text, clicks Capture, and clicks Send.`
+      );
     },
   },
-
-  // ── 2. upload_video ─────────────────────────────────────────────────────────
   {
-    name: "upload_video",
-    description: "Upload a local video file by absolute path.",
+    name: "await_capture",
+    description:
+      "Wait until the user clicks Send in the capture UI, then return all annotated frames as image content blocks. " +
+      "Polls every 1.5 s. Default timeout 600 s.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute path to the video file" },
-        name: { type: "string", description: "Optional display name" },
+        sessionId: { type: "string" },
+        timeoutSec: { type: "number" },
       },
-      required: ["path"],
+      required: ["sessionId"],
     },
     async handler(args) {
-      const filePath = args.path as string;
-      const name = (args.name as string | undefined) ?? path.basename(filePath);
-      const buffer = readFileSync(filePath);
-      const blob = new Blob([buffer]);
-      const form = new FormData();
-      form.append("video", blob, name);
-      const result = await apiPostFormData<{ projectId: string }>("/api/projects", form);
-      return textResult(JSON.stringify({ projectId: result.projectId, message: "Upload started. Use get_scenes or extract_frames to monitor progress." }));
-    },
-  },
-
-  // ── 3. get_scenes ───────────────────────────────────────────────────────────
-  {
-    name: "get_scenes",
-    description: "Get the detected scene list for a project.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-      },
-      required: ["projectId"],
-    },
-    async handler(args) {
-      const projectId = args.projectId as string;
-      const scenes = await apiGet<unknown>(`/api/projects/${projectId}/scenes`);
-      return textResult(JSON.stringify(scenes, null, 2));
-    },
-  },
-
-  // ── 4. refine_scenes ────────────────────────────────────────────────────────
-  {
-    name: "refine_scenes",
-    description: "Save a refined scene list for a project.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-        scenes: {
-          type: "array",
-          description: "Array of scene objects",
-          items: {
-            type: "object",
-            properties: {
-              start: { type: "number" },
-              end: { type: "number" },
-              label: { type: "string" },
-            },
-            required: ["start", "end"],
-          },
-        },
-      },
-      required: ["projectId", "scenes"],
-    },
-    async handler(args) {
-      const projectId = args.projectId as string;
-      const scenes = args.scenes as Array<{ start: number; end: number; label?: string }>;
-      const result = await apiPost<unknown>(`/api/projects/${projectId}/scenes`, { scenes });
-      return textResult(JSON.stringify(result));
-    },
-  },
-
-  // ── 5. extract_frames ───────────────────────────────────────────────────────
-  {
-    name: "extract_frames",
-    description: "Extract frames for a project. Blocks until extraction completes (max 10 minutes).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-        sceneIds: {
-          type: "array",
-          description: "Optional list of scene IDs to extract",
-          items: { type: "number" },
-        },
-        fps: { type: "number", description: "Frames per second to extract" },
-        quality: { type: "string", description: "Quality setting (e.g. 'low', 'medium', 'high')" },
-      },
-      required: ["projectId"],
-    },
-    async handler(args) {
-      const projectId = args.projectId as string;
-      const sceneIds = args.sceneIds as number[] | undefined;
-      const fps = args.fps as number | undefined;
-      const quality = args.quality as string | undefined;
-
-      // Start extraction
-      await apiPost<unknown>(`/api/projects/${projectId}/extract`, {
-        sceneIds,
-        fps,
-        quality,
-      });
-
-      // Poll until done or error (max 300 polls × 2s = 10 min)
-      const MAX_POLLS = 300;
-      for (let i = 0; i < MAX_POLLS; i++) {
-        await new Promise<void>((r) => setTimeout(r, 2000));
-        const status = await apiGet<StatusData>(`/api/projects/${projectId}/status`);
-        if (status.status === "done") break;
-        if (status.status === "error") {
-          throw new Error(`Extraction failed: ${status.error ?? "unknown error"}`);
-        }
-      }
-
-      // Return manifest
-      const project = await apiGet<ProjectStateResponse>(`/api/projects/${projectId}`);
-      return textResult(JSON.stringify(project.manifest ?? { message: "Extraction complete but manifest not available." }, null, 2));
-    },
-  },
-
-  // ── 6. get_frame_paths ──────────────────────────────────────────────────────
-  {
-    name: "get_frame_paths",
-    description: "Get absolute paths to extracted frames, optionally filtered by sceneId/segId.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-        sceneId: { type: "number", description: "Optional scene ID filter" },
-        segId: { type: "number", description: "Optional segment ID filter" },
-      },
-      required: ["projectId"],
-    },
-    async handler(args) {
-      const projectId = args.projectId as string;
-      const sceneId = args.sceneId as number | undefined;
-      const segId = args.segId as number | undefined;
-
-      const project = await apiGet<ProjectStateResponse>(`/api/projects/${projectId}`);
-      const manifest = project.manifest;
-      if (!manifest) {
-        throw new Error("No frames manifest found — run extract_frames first.");
-      }
-
-      const paths: string[] = [];
-      for (const scene of manifest.scenes) {
-        if (sceneId !== undefined && scene.id !== sceneId) continue;
-        for (const seg of scene.segments) {
-          if (segId !== undefined && seg.id !== segId) continue;
-          for (const frame of seg.frames) {
-            paths.push(frame.path);
+      const sessionId = args.sessionId as string;
+      const timeoutSec = (args.timeoutSec as number | undefined) ?? 600;
+      const deadline = Date.now() + timeoutSec * 1000;
+      let consecutiveFetchFails = 0;
+      while (Date.now() < deadline) {
+        await new Promise<void>((r) => setTimeout(r, 1500));
+        let session: SessionRecord;
+        try {
+          session = await apiGet<SessionRecord>(`/api/sessions/${sessionId}`);
+          consecutiveFetchFails = 0;
+        } catch {
+          consecutiveFetchFails++;
+          if (consecutiveFetchFails >= 5) {
+            return textResult(
+              `Lost contact with dev server while polling ${sessionId}. Re-run await_capture once the server is back.`
+            );
           }
+          continue;
+        }
+        if (session.status === "sent" && session.captures.length > 0) {
+          const content: Array<TextContent | ImageContent> = [];
+          for (const c of session.captures) {
+            try {
+              const buf = await readFile(c.path);
+              content.push({
+                type: "image",
+                data: buf.toString("base64"),
+                mimeType: "image/webp",
+              });
+            } catch {
+              // skip unreadable file
+            }
+          }
+          content.push({
+            type: "text",
+            text:
+              `Received ${content.length} annotated frame(s) from session ${sessionId}. ` +
+              `Red arrows, boxes, text labels, and freehand marks indicate the changes the user wants — read them visually and apply.`,
+          });
+          return { content };
         }
       }
-
-      return textResult(paths.join("\n"));
-    },
-  },
-
-  // ── 7. get_snippet ──────────────────────────────────────────────────────────
-  {
-    name: "get_snippet",
-    description: "Get a ready-to-paste Claude Code prompt snippet for the project.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-        sceneId: { type: "number", description: "Optional scene ID" },
-        segId: { type: "number", description: "Optional segment ID" },
-      },
-      required: ["projectId"],
-    },
-    async handler(args) {
-      const projectId = args.projectId as string;
-      const sceneId = args.sceneId as number | undefined;
-      const segId = args.segId as number | undefined;
-
-      const params = new URLSearchParams();
-      if (sceneId !== undefined) params.set("scene", String(sceneId));
-      if (segId !== undefined) params.set("seg", String(segId));
-      const query = params.toString() ? `?${params.toString()}` : "";
-
-      const text = await apiGetText(`/api/projects/${projectId}/snippet${query}`);
-      return textResult(text);
-    },
-  },
-
-  // ── 8. preview_frame ────────────────────────────────────────────────────────
-  {
-    name: "preview_frame",
-    description: "Get a single frame at a timestamp (seconds). Returns the absolute path to a saved JPEG.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-        t: { type: "number", description: "Timestamp in seconds" },
-      },
-      required: ["projectId", "t"],
-    },
-    async handler(args) {
-      const projectId = args.projectId as string;
-      const t = args.t as number;
-
-      const buffer = await apiGetBinary(`/api/projects/${projectId}/preview?t=${t}`);
-      const outPath = path.join(os.tmpdir(), `vtc_preview_${projectId}_${t}.jpg`);
-      writeFileSync(outPath, Buffer.from(buffer));
-      return textResult(outPath);
-    },
-  },
-
-  // ── 9. analyze_with_claude ──────────────────────────────────────────────────
-  {
-    name: "analyze_with_claude",
-    description:
-      "Analyze extracted video frames by sending them to Claude's vision API. " +
-      "Loads frames from disk, encodes as base64, calls claude-opus-4-7, returns analysis text. " +
-      "Requires ANTHROPIC_API_KEY to be set. Caps at 20 frames per call.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-        sceneId: { type: "number", description: "Optional scene index (0-based). Omit for all scenes." },
-        segId: { type: "number", description: "Optional segment index (0-based). Omit for all segments." },
-        prompt: { type: "string", description: "Custom analysis prompt. Defaults to general frame analysis." },
-      },
-      required: ["projectId"],
-    },
-    async handler(args) {
-      const { projectId, sceneId, segId, prompt } = args as {
-        projectId: string;
-        sceneId?: number;
-        segId?: number;
-        prompt?: string;
-      };
-
-      const result = await apiPost<{
-        analysis: string;
-        model: string;
-        frameCount: number;
-        inputTokens: number;
-        outputTokens: number;
-      }>(`/api/projects/${projectId}/analyze`, { sceneId, segId, prompt });
-
-      const text =
-        `## Claude Vision Analysis\n\n` +
-        `**Model:** ${result.model}  |  **Frames analyzed:** ${result.frameCount}  |  ` +
-        `**Tokens used:** ${result.inputTokens} in / ${result.outputTokens} out\n\n` +
-        result.analysis;
-
-      return { content: [{ type: "text", text }] };
-    },
-  },
-
-  // ── 10. get_compressed_snippet ──────────────────────────────────────────────
-  {
-    name: "get_compressed_snippet",
-    description:
-      "Get a token-compressed snippet for the specified frames. " +
-      "Uses $ROOT alias to shorten repeated path prefixes. " +
-      "Useful for manually pasting into Claude Code with fewer tokens.",
-    inputSchema: {
-      type: "object" as const,
-      properties: {
-        projectId: { type: "string", description: "Project ID" },
-        sceneId: { type: "number", description: "Optional scene index" },
-        segId: { type: "number", description: "Optional segment index" },
-      },
-      required: ["projectId"],
-    },
-    async handler(args) {
-      const { projectId, sceneId, segId } = args as {
-        projectId: string;
-        sceneId?: number;
-        segId?: number;
-      };
-
-      const params = new URLSearchParams();
-      if (sceneId !== undefined) params.set("scene", String(sceneId));
-      if (segId !== undefined) params.set("seg", String(segId));
-      const query = params.toString() ? `?${params.toString()}` : "";
-
-      const snippet = await apiGetText(`/api/projects/${projectId}/snippet${query}`);
-
-      // Extract first file path to determine the common prefix
-      const pathMatch = snippet.match(/([A-Za-z]:[\\\/][^\n]+\.webp)/);
-      if (pathMatch) {
-        const fullPath = pathMatch[1].replace(/\\/g, "/");
-        const framesIdx = fullPath.indexOf("/frames/");
-        if (framesIdx !== -1) {
-          const rootPrefix = fullPath.substring(0, framesIdx + 8); // includes "/frames/"
-          const escaped = rootPrefix.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
-          const escapedBackslash = rootPrefix.replace(/\//g, "\\").replace(/[.*+?^${}()|[\]]/g, "\\$&");
-          const compressed = snippet
-            .replace(new RegExp(escaped, "gi"), "$ROOT/")
-            .replace(new RegExp(escapedBackslash, "gi"), "$ROOT\\");
-          return textResult(`$ROOT = ${rootPrefix}\n\n${compressed}`);
-        }
-      }
-      return textResult(snippet);
+      return textResult(
+        `Timed out waiting for session ${sessionId} after ${timeoutSec}s. ` +
+          `Re-run await_capture once the user clicks Send.`
+      );
     },
   },
 ];
