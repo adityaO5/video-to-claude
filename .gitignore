@@ -42,6 +42,16 @@ next-env.d.ts
 
 # project data
 data/projects/
+data/sessions/
+
+# mcp build output
+mcp/dist/
+
+# playwright local artifacts
+.playwright-mcp/
+
+# dev server log
+.dev-server.log
 
 # python
 python/__pycache__/
