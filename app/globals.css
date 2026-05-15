@@ -119,14 +119,15 @@
 
 /* ── App-level design tokens ─────────────────────────────────────────────── */
 :root {
-  --bg: #0d0d0f;
-  --surface: #1a1a1e;
-  --surface-2: #252529;
+  --bg: #09090b;
+  --surface: #111113;
+  --surface-2: #1c1c1f;
   --accent: #f59e0b;
-  --accent-dim: #92400e;
-  --text: #e8e8ea;
-  --text-muted: #666670;
-  --border: #2a2a2e;
+  --accent-dim: #78350f;
+  --text: #f5f5f7;
+  --text-muted: #86868b;
+  --border: rgba(255,255,255,0.07);
+  --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
 }
 
 @layer base {
@@ -136,12 +137,12 @@
   html {
     background: var(--bg);
     color: var(--text);
-    font-family: var(--font-sans), system-ui, sans-serif;
+    font-family: var(--font-system), var(--font-sans), sans-serif;
   }
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: var(--font-sans), system-ui, sans-serif;
+    font-family: var(--font-system), var(--font-sans), sans-serif;
   }
   body::before {
     content: "";

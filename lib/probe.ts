@@ -21,7 +21,9 @@ export async function probeVideo(filePath: string): Promise<ProbeResult> {
   if (!ffmpegPath) throw new Error("ffmpeg-static not available");
   let stderr = "";
   try {
-    const result = await exec(ffmpegPath, ["-i", filePath, "-hide_banner", "-f", "null", "-"]);
+    // No output flag → ffmpeg exits with code 1 after parsing the header.
+    // Avoid "-f null -" which decodes the entire file (very slow for big files).
+    const result = await exec(ffmpegPath, ["-i", filePath, "-hide_banner"]);
     stderr = result.stderr;
   } catch (e) {
     const err = e as { stderr?: string; message?: string };

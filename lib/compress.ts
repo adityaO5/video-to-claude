@@ -1,4 +1,7 @@
 import sharp from "sharp";
+import { statSync } from "fs";
+import { writeFile } from "fs/promises";
+import path from "path";
 
 export type Quality = "low" | "med" | "high";
 
@@ -44,4 +47,71 @@ export async function compressFrame(
   }
 
   return result!;
+}
+
+// ── Adaptive send-time compression ───────────────────────────────────────────
+
+interface AdaptiveConfig {
+  maxWidth: number;
+  targetBytes: number;
+  minQuality: number;
+}
+
+function adaptiveConfig(totalCount: number): AdaptiveConfig {
+  if (totalCount <= 2)  return { maxWidth: 960, targetBytes: 1_500_000, minQuality: 55 };
+  if (totalCount <= 5)  return { maxWidth: 880, targetBytes:   900_000, minQuality: 50 };
+  if (totalCount <= 10) return { maxWidth: 720, targetBytes:   500_000, minQuality: 45 };
+  if (totalCount <= 20) return { maxWidth: 600, targetBytes:   280_000, minQuality: 40 };
+  return                     { maxWidth: 480, targetBytes:   150_000, minQuality: 35 };
+}
+
+export interface CompressionResult {
+  compressedPath: string;
+  originalBytes: number;
+  compressedBytes: number;
+}
+
+export async function compressCapture(
+  srcPath: string,
+  totalCount: number
+): Promise<CompressionResult> {
+  const cfg = adaptiveConfig(totalCount);
+  const originalBytes = statSync(srcPath).size;
+
+  const ext = path.extname(srcPath);
+  const compressedPath = srcPath.replace(ext, `_c${ext}`);
+
+  let quality = 82;
+  let buf: Buffer = Buffer.alloc(0);
+
+  while (true) {
+    buf = await sharp(srcPath)
+      .resize({ width: cfg.maxWidth, withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer();
+
+    if (buf.length <= cfg.targetBytes || quality <= cfg.minQuality) break;
+    quality -= 5;
+  }
+
+  await writeFile(compressedPath, buf);
+  return { compressedPath, originalBytes, compressedBytes: buf.length };
+}
+
+export interface CompressionStats {
+  originalTotalBytes: number;
+  compressedTotalBytes: number;
+  savedBytes: number;
+  count: number;
+}
+
+export function summarizeStats(results: CompressionResult[]): CompressionStats {
+  const originalTotalBytes = results.reduce((s, r) => s + r.originalBytes, 0);
+  const compressedTotalBytes = results.reduce((s, r) => s + r.compressedBytes, 0);
+  return {
+    originalTotalBytes,
+    compressedTotalBytes,
+    savedBytes: originalTotalBytes - compressedTotalBytes,
+    count: results.length,
+  };
 }
