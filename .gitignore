@@ -51,5 +51,8 @@ python/.venv/
 # temp
 tmp/
 
+# test scratch
+tests/tmp/
+
 # brainstorm session
 .superpowers/
