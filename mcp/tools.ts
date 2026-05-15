@@ -3,8 +3,8 @@ import { exec, spawn } from "child_process";
 import path from "path";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { apiGet, apiPost } from "./client.js";
+import { state } from "./state.js";
 
-const BASE_URL = process.env.VIDEO_TO_CLAUDE_URL ?? "http://localhost:3000";
 const VTC_ROOT = path.resolve(__dirname, "..", "..", "..");
 
 type TextContent = { type: "text"; text: string };
@@ -20,27 +20,50 @@ interface CaptureRecord {
   t: number;
   path: string;
   bytes: number;
+  compressedPath?: string;
+  compressedBytes?: number;
+}
+
+interface CompressionStats {
+  originalTotalBytes: number;
+  compressedTotalBytes: number;
+  savedBytes: number;
+  count: number;
 }
 
 interface SessionRecord {
   id: string;
   status: "waiting" | "ready" | "sent";
   captures: CaptureRecord[];
+  compressionStats?: CompressionStats;
 }
 
-async function isDevServerUp(): Promise<boolean> {
-  try {
-    const res = await fetch(`${BASE_URL}/api/sessions/_ping`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    return res.status < 500;
-  } catch {
-    return false;
+const SCAN_PORTS = [3000, 3001, 3002, 3003, 3004, 3005];
+
+async function findOurServer(): Promise<string | null> {
+  for (const port of SCAN_PORTS) {
+    try {
+      const url = `http://localhost:${port}`;
+      const res = await fetch(`${url}/api/sessions/_ping`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as Record<string, unknown>;
+        if (json.app === "video-to-claude") return url;
+      }
+    } catch {
+      // port not our app
+    }
   }
+  return null;
 }
 
 async function ensureDevServer(): Promise<void> {
-  if (await isDevServerUp()) return;
+  const found = await findOurServer();
+  if (found) {
+    state.baseUrl = found;
+    return;
+  }
   const child = spawn("npm", ["run", "dev"], {
     cwd: VTC_ROOT,
     detached: true,
@@ -51,7 +74,11 @@ async function ensureDevServer(): Promise<void> {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     await new Promise<void>((r) => setTimeout(r, 1500));
-    if (await isDevServerUp()) return;
+    const active = await findOurServer();
+    if (active) {
+      state.baseUrl = active;
+      return;
+    }
   }
   throw new Error("Dev server did not start within 30 seconds");
 }
@@ -78,7 +105,7 @@ export const tools: McpTool[] = [
       await ensureDevServer();
       const created = await apiPost<{ sessionId: string }>("/api/sessions", {});
       const sessionId = created.sessionId;
-      const url = `${BASE_URL}/capture/${sessionId}`;
+      const url = `${state.baseUrl}/capture/${sessionId}`;
       openBrowser(url);
       return textResult(
         `Capture session started.\n` +
@@ -125,8 +152,9 @@ export const tools: McpTool[] = [
         if (session.status === "sent" && session.captures.length > 0) {
           const content: Array<TextContent | ImageContent> = [];
           for (const c of session.captures) {
+            const filePath = c.compressedPath ?? c.path;
             try {
-              const buf = await readFile(c.path);
+              const buf = await readFile(filePath);
               content.push({
                 type: "image",
                 data: buf.toString("base64"),
@@ -136,10 +164,14 @@ export const tools: McpTool[] = [
               // skip unreadable file
             }
           }
+          const stats = session.compressionStats;
+          const statsNote = stats
+            ? ` (compressed ${(stats.originalTotalBytes / 1024).toFixed(0)} KB → ${(stats.compressedTotalBytes / 1024).toFixed(0)} KB, saved ${(stats.savedBytes / 1024).toFixed(0)} KB)`
+            : "";
           content.push({
             type: "text",
             text:
-              `Received ${content.length} annotated frame(s) from session ${sessionId}. ` +
+              `Received ${content.length} annotated frame(s) from session ${sessionId}${statsNote}. ` +
               `Red arrows, boxes, text labels, and freehand marks indicate the changes the user wants — read them visually and apply.`,
           });
           return { content };
